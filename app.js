@@ -32,7 +32,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const allowedorigins = [
   "http://localhost:5173",
-  "https://wallstorie.in",
+  "https://www.wallstorie.in",
 ];
 // Middleware
 app.use(
