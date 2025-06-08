@@ -165,7 +165,14 @@ const editProduct = async (req, res) => {
     // Process numeric fields
     if (updates.price) updates.price = Number(updates.price);
     if (updates.salePrice) updates.salePrice = Number(updates.salePrice);
-    if (updates.discount) updates.discount = Number(updates.discount);
+    if (
+      updates.discount !== undefined &&
+      updates.discount !== null &&
+      updates.discount !== ""
+    ) {
+      const parsed = Number(updates.discount);
+      updates.discount = isNaN(parsed) ? undefined : parsed;
+    }
     if (updates.stockQuantity)
       updates.stockQuantity = Number(updates.stockQuantity);
     if (updates.popularity) updates.popularity = Number(updates.popularity);
