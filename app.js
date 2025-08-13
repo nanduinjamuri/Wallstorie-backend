@@ -1,12 +1,13 @@
 const express = require("express");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
-require("dotenv").config();
 const session = require("express-session");
-const MongoStore = require("connect-mongo"); // ADD THIS LINE
-const lusca = require("lusca");
 const passport = require("passport");
 const mongoose = require("mongoose");
+require("dotenv").config();
+const path = require("path");
+
+// Routes imports
 const authRouter = require("./routes/auth/auth-rotes");
 const adminProductsRouter = require("./routes/admin/product-routes");
 const shopProductRouter = require("./routes/shop/productroutes");
@@ -19,89 +20,131 @@ const shopSearchRouter = require("./routes/shop/searchroutes");
 const reviewRouter = require("./routes/shop/reviewroutes");
 const userinforouter = require("./routes/auth/userinfo-routes");
 
-// Connect to MongoDB
+// Connect MongoDB
 mongoose
   .connect(process.env.DB_URL)
-  .then(() => console.log("MongoDB connected"))
-  .catch((error) => console.log("MongoDB connection error:", error));
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch((error) => console.log("❌ MongoDB connection error:", error));
 
-// Import passport configuration
+// Passport config
 require("./config/passportConfig");
 
-const app = express();
+const isProd = process.env.NODE_ENV === "production";
 const PORT = process.env.PORT || 5000;
-const allowedorigins = [
-  "http://localhost:5173",
-  "https://www.wallstorie.in",
-];
-// Middleware
-app.use(
-  cors({
-    origin: allowedorigins,
-    methods: ["GET", "POST", "DELETE", "PUT"],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "Cache-Control",
-      "Expires",
-      "Pragma",
-      "X-XSRF-TOKEN",
-    ],
-    exposedHeaders: ["set-cookie"],
-    credentials: true,
-  })
-);
 
-app.use(cookieParser());
-app.use(express.json());
+async function createServer() {
+  const app = express();
 
-// Session setup (required for Passport)
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "your_secret_key",
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.DB_URL, // Use your MongoDB connection string
-      collectionName: "sessions",
-    }),
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000,
-    },
-  })
-);
+  // Middleware
+  app.use(
+    cors({
+      origin: isProd ? "https://www.wallstorie.in" : "http://localhost:5173",
+      methods: ["GET", "POST", "DELETE", "PUT"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "Cache-Control",
+        "Expires",
+        "Pragma",
+        "X-XSRF-TOKEN",
+      ],
+      exposedHeaders: ["set-cookie"],
+      credentials: true,
+    })
+  );
 
-// Initialize passport
-app.use(passport.initialize());
-app.use(passport.session());
+  app.use(cookieParser());
+  app.use(express.json());
 
-// Routes
-app.use("/api/auth", authRouter);
-app.use("/api/info", userinforouter);
-app.use("/api/admin/products", adminProductsRouter);
-app.use("/api/shop/products", shopProductRouter);
-app.use("/api/shop/cart", shopcartRouter);
-app.use("/api/shop/address", shopAddressRouter);
-app.use("/api/payments", paymentRouter);
-app.use("/api/shop/order", shopOrderRouter);
-app.use("/api/admin/orders", adminOrderRouter);
-app.use("/api/shop/search", shopSearchRouter);
-app.use("/api/shop/review", reviewRouter);
+  app.use(
+    session({
+      secret: process.env.SESSION_SECRET || "your_secret_key",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: isProd,
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000,
+      },
+    })
+  );
 
-// Root route
-app.get("/", (req, res) => {
-  res.send("API is running");
-});
+  app.use(passport.initialize());
+  app.use(passport.session());
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send("Something broke!");
-});
+  // API routes
+  app.use("/api/auth", authRouter);
+  app.use("/api/info", userinforouter);
+  app.use("/api/admin/products", adminProductsRouter);
+  app.use("/api/shop/products", shopProductRouter);
+  app.use("/api/shop/cart", shopcartRouter);
+  app.use("/api/shop/address", shopAddressRouter);
+  app.use("/api/payments", paymentRouter);
+  app.use("/api/shop/order", shopOrderRouter);
+  app.use("/api/admin/orders", adminOrderRouter);
+  app.use("/api/shop/search", shopSearchRouter);
+  app.use("/api/shop/review", reviewRouter);
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`Server running at port ${PORT}`);
-});
+  if (!isProd) {
+    // Development: use Vite as middleware
+    const { createServer: createViteServer } = require("vite");
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "custom",
+    });
+    app.use(vite.middlewares);
+
+    // SSR route handler
+    app.use("*", async (req, res, next) => {
+      try {
+        const url = req.originalUrl;
+        const template = await vite.transformIndexHtml(url, "");
+        const { render } = await vite.ssrLoadModule("/src/entry-server.jsx");
+        const appHtml = await render(url);
+
+        const html = template.replace(`<!--ssr-outlet-->`, appHtml);
+        res.status(200).set({ "Content-Type": "text/html" }).end(html);
+      } catch (e) {
+        vite.ssrFixStacktrace(e);
+        next(e);
+      }
+    });
+  } else {
+    // Production: serve built client
+    app.use(
+      require("serve-static")(path.resolve(__dirname, "dist/client"), {
+        index: false,
+      })
+    );
+
+    // SSR handler in production
+    app.use("*", async (req, res, next) => {
+      try {
+        const url = req.originalUrl;
+        const template = require("fs").readFileSync(
+          path.resolve(__dirname, "dist/client/index.html"),
+          "utf-8"
+        );
+        const { render } = require("./dist/server/entry-server.js");
+        const appHtml = await render(url);
+
+        const html = template.replace(`<!--ssr-outlet-->`, appHtml);
+        res.status(200).set({ "Content-Type": "text/html" }).end(html);
+      } catch (e) {
+        next(e);
+      }
+    });
+  }
+
+  // Error handler
+  app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).send("Something broke!");
+  });
+
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+  });
+}
+
+createServer();
