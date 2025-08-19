@@ -114,6 +114,18 @@ async function createServer() {
     app.use(
       require("serve-static")(path.resolve(__dirname, "dist/client"), {
         index: false,
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith(".html")) {
+            // Don't cache HTML (so users always get fresh pages)
+            res.setHeader("Cache-Control", "no-cache");
+          } else {
+            // Cache other static assets for 1 year
+            res.setHeader(
+              "Cache-Control",
+              "public, max-age=31536000, immutable"
+            );
+          }
+        },
       })
     );
 
@@ -135,6 +147,10 @@ async function createServer() {
       }
     });
   }
+
+  app.use("/uploads", (req, res) => {
+    res.status(403).send("Access Forbidden");
+  });
 
   // Error handler
   app.use((err, req, res, next) => {
